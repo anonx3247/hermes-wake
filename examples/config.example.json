@@ -1,0 +1,20 @@
+{
+  "hermes" : {
+    "baseURL" : "https://your-hermes-node.your-tailnet.ts.net",
+    "conversation" : "mac-voice-assistant"
+  },
+  "keywordsFile" : "~/.config/cipher-voice/keywords.txt",
+  "modelDirectory" : "~/.local/share/cipher-voice/models/kws-gigaspeech-3.3M",
+  "wakePhrases" : [
+    {
+      "score" : 1.5,
+      "text" : "HEY CIPHER",
+      "threshold" : 0.25
+    },
+    {
+      "score" : 1.5,
+      "text" : "HEY SIPH",
+      "threshold" : 0.25
+    }
+  ]
+}
