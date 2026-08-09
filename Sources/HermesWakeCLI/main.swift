@@ -131,8 +131,9 @@ struct HermesWakeCLI {
       credentials: KeychainCredentialStore()
     )
     try await remote.connect()
+    try await remote.verifyRPC()
     await remote.disconnect()
-    print("✓ authenticated WebSocket connection to remote Hermes")
+    print("✓ authenticated WebSocket and JSON-RPC connection to remote Hermes")
     print("Hermes Wake setup is ready. FluidAudio models download on first listen.")
   }
 

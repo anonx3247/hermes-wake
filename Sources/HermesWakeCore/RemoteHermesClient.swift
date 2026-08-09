@@ -41,18 +41,28 @@ public struct HermesSession: Codable, Equatable, Sendable {
 public enum RemoteHermesError: LocalizedError {
   case invalidURL
   case missingCredentials
-  case unauthorized
+  case invalidCredentials
+  case sessionCookiesMissing
+  case ticketRejected(Int)
   case invalidResponse
+  case webSocketTimeout
   case disconnected
+  case rpcTimeout(String)
   case rpc(String)
 
   public var errorDescription: String? {
     switch self {
     case .invalidURL: "The remote Hermes URL is invalid."
     case .missingCredentials: "Remote Hermes username or password is missing."
-    case .unauthorized: "Remote Hermes rejected the username or password."
+    case .invalidCredentials: "Remote Hermes rejected the username or password."
+    case .sessionCookiesMissing:
+      "Remote Hermes accepted the login but returned no usable session cookies."
+    case .ticketRejected(let status):
+      "Remote Hermes accepted the login but rejected the WebSocket ticket request (HTTP \(status))."
     case .invalidResponse: "Remote Hermes returned an invalid response."
+    case .webSocketTimeout: "Timed out waiting for the remote Hermes WebSocket to become ready."
     case .disconnected: "The remote Hermes WebSocket is disconnected."
+    case .rpcTimeout(let method): "Hermes RPC timed out: \(method)"
     case .rpc(let message): "Hermes RPC failed: \(message)"
     }
   }
@@ -86,8 +96,8 @@ public actor RemoteHermesClient {
 
   public func connect() async throws {
     guard socket == nil else { return }
-    try await login()
-    let ticket = try await mintWebSocketTicket()
+    let cookieHeader = try await login()
+    let ticket = try await mintWebSocketTicket(cookieHeader: cookieHeader)
     guard var components = URLComponents(string: configuration.baseURL),
       components.host != nil
     else { throw RemoteHermesError.invalidURL }
@@ -99,11 +109,13 @@ public actor RemoteHermesClient {
     let task = urlSession.webSocketTask(with: url)
     socket = task
     task.resume()
-    try await withCheckedThrowingContinuation {
-      (continuation: CheckedContinuation<Void, any Error>) in
-      task.sendPing { error in
-        if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-      }
+    do {
+      let firstMessage = try await receiveFirstMessage(from: task)
+      handle(message: firstMessage)
+    } catch {
+      task.cancel(with: .goingAway, reason: nil)
+      socket = nil
+      throw error
     }
     Task { await self.receiveLoop() }
   }
@@ -112,6 +124,10 @@ public actor RemoteHermesClient {
     socket?.cancel(with: .goingAway, reason: nil)
     socket = nil
     failPending(with: RemoteHermesError.disconnected)
+  }
+
+  public func verifyRPC() async throws {
+    _ = try await request(method: "session.list", params: ["limit": 1])
   }
 
   public func createSession(title: String, source: String = "voice") async throws -> HermesSession {
@@ -146,7 +162,7 @@ public actor RemoteHermesClient {
     _ = try await request(method: "session.interrupt", params: ["session_id": sessionID])
   }
 
-  private func login() async throws {
+  private func login() async throws -> String {
     guard let baseURL = URL(string: configuration.baseURL), !configuration.username.isEmpty,
       let password = try credentials.password(for: configuration.username), !password.isEmpty
     else { throw RemoteHermesError.missingCredentials }
@@ -162,21 +178,67 @@ public actor RemoteHermesClient {
     ])
     let (_, response) = try await urlSession.data(for: request)
     guard let http = response as? HTTPURLResponse else { throw RemoteHermesError.invalidResponse }
-    guard http.statusCode != 401 else { throw RemoteHermesError.unauthorized }
+    guard http.statusCode != 401 else { throw RemoteHermesError.invalidCredentials }
     guard (200..<300).contains(http.statusCode) else { throw RemoteHermesError.invalidResponse }
+
+    let cookieHeader = sessionCookieHeader(from: http, responseURL: url)
+    guard cookieHeader.contains("hermes_session_at=") else {
+      throw RemoteHermesError.sessionCookiesMissing
+    }
+    return cookieHeader
   }
 
-  private func mintWebSocketTicket() async throws -> String {
+  private func sessionCookieHeader(from response: HTTPURLResponse, responseURL: URL) -> String {
+    var cookiesByName: [String: String] = [:]
+    for cookie in cookieStorage.cookies(for: responseURL) ?? [] {
+      cookiesByName[cookie.name] = cookie.value
+    }
+
+    let headerFields = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
+      result[String(describing: entry.key)] = String(describing: entry.value)
+    }
+    for cookie in HTTPCookie.cookies(withResponseHeaderFields: headerFields, for: responseURL) {
+      cookiesByName[cookie.name] = cookie.value
+    }
+
+    let rawSetCookie =
+      headerFields.first { $0.key.caseInsensitiveCompare("Set-Cookie") == .orderedSame }?.value
+      ?? ""
+    if let expression = try? NSRegularExpression(
+      pattern: #"(?:^|,\s*)(hermes_session_[a-z]+)=([^;]+)"#)
+    {
+      let range = NSRange(rawSetCookie.startIndex..., in: rawSetCookie)
+      for match in expression.matches(in: rawSetCookie, range: range)
+      where match.numberOfRanges == 3 {
+        guard let nameRange = Range(match.range(at: 1), in: rawSetCookie),
+          let valueRange = Range(match.range(at: 2), in: rawSetCookie)
+        else { continue }
+        cookiesByName[String(rawSetCookie[nameRange])] = String(rawSetCookie[valueRange])
+      }
+    }
+
+    return cookiesByName.sorted { $0.key < $1.key }
+      .map { "\($0.key)=\($0.value)" }
+      .joined(separator: "; ")
+  }
+
+  private func mintWebSocketTicket(cookieHeader: String) async throws -> String {
     guard let baseURL = URL(string: configuration.baseURL) else {
       throw RemoteHermesError.invalidURL
     }
     var request = URLRequest(url: baseURL.appending(path: "api/auth/ws-ticket"))
     request.httpMethod = "POST"
+    request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
     let (data, response) = try await urlSession.data(for: request)
-    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-      let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+    guard let http = response as? HTTPURLResponse else {
+      throw RemoteHermesError.invalidResponse
+    }
+    guard (200..<300).contains(http.statusCode) else {
+      throw RemoteHermesError.ticketRejected(http.statusCode)
+    }
+    guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       let ticket = body["ticket"] as? String
-    else { throw RemoteHermesError.unauthorized }
+    else { throw RemoteHermesError.invalidResponse }
     return ticket
   }
 
@@ -200,6 +262,28 @@ public actor RemoteHermesClient {
           self.rejectRequest(id: id, error: error)
         }
       }
+      Task {
+        try? await Task.sleep(for: .seconds(30))
+        self.rejectRequest(id: id, error: RemoteHermesError.rpcTimeout(method))
+      }
+    }
+  }
+
+  private func receiveFirstMessage(
+    from task: URLSessionWebSocketTask,
+    timeoutSeconds: UInt64 = 10
+  ) async throws -> URLSessionWebSocketTask.Message {
+    try await withThrowingTaskGroup(of: URLSessionWebSocketTask.Message.self) { group in
+      group.addTask { try await task.receive() }
+      group.addTask {
+        try await Task.sleep(for: .seconds(timeoutSeconds))
+        throw RemoteHermesError.webSocketTimeout
+      }
+      guard let first = try await group.next() else {
+        throw RemoteHermesError.disconnected
+      }
+      group.cancelAll()
+      return first
     }
   }
 
@@ -208,16 +292,20 @@ public actor RemoteHermesClient {
     do {
       while self.socket != nil {
         let message = try await socket.receive()
-        switch message {
-        case .string(let text): handle(text)
-        case .data(let data):
-          if let text = String(data: data, encoding: .utf8) { handle(text) }
-        @unknown default: break
-        }
+        handle(message: message)
       }
     } catch {
       self.socket = nil
       failPending(with: error)
+    }
+  }
+
+  private func handle(message: URLSessionWebSocketTask.Message) {
+    switch message {
+    case .string(let text): handle(text)
+    case .data(let data):
+      if let text = String(data: data, encoding: .utf8) { handle(text) }
+    @unknown default: break
     }
   }
 
