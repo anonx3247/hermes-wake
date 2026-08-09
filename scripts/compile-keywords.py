@@ -16,7 +16,7 @@ def expand(path: str) -> pathlib.Path:
 
 
 def main() -> None:
-    config_path = expand(sys.argv[1] if len(sys.argv) > 1 else "~/.config/cipher-voice/config.json")
+    config_path = expand(sys.argv[1] if len(sys.argv) > 1 else "~/.config/hermes-wake/config.json")
     config = json.loads(config_path.read_text())
     model_dir = expand(config["modelDirectory"])
     output_path = expand(config["keywordsFile"])

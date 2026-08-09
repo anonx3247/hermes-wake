@@ -1,20 +1,35 @@
 {
-  "hermes" : {
-    "baseURL" : "https://your-hermes-node.your-tailnet.ts.net",
-    "conversation" : "mac-voice-assistant"
+  "commands": {
+    "conversationMode": ["run", "conversation mode", "keep listening"],
+    "newConversation": ["new conversation", "new convo"],
+    "pause": ["pause", "take five", "hold on"],
+    "resume": ["resume", "continue", "i'm back"],
+    "sleep": ["go to sleep", "sleep", "that's all"],
+    "stop": ["stop", "cancel"],
+    "turnMode": ["turn mode", "wake mode"]
   },
-  "keywordsFile" : "~/.config/cipher-voice/keywords.txt",
-  "modelDirectory" : "~/.local/share/cipher-voice/models/kws-gigaspeech-3.3M",
-  "wakePhrases" : [
-    {
-      "score" : 1.5,
-      "text" : "HEY CIPHER",
-      "threshold" : 0.25
-    },
-    {
-      "score" : 1.5,
-      "text" : "HEY SIPH",
-      "threshold" : 0.25
-    }
+  "interaction": {
+    "bargeInRMS": 0.025,
+    "eouDebounceMs": 960,
+    "sessionTitle": "Voice conversation"
+  },
+  "keywordsFile": "~/.config/hermes-wake/keywords.txt",
+  "modelDirectory": "~/.local/share/hermes-wake/models/kws-gigaspeech-3.3M",
+  "remote": {
+    "baseURL": "",
+    "profile": null,
+    "username": ""
+  },
+  "speech": {
+    "enabled": true,
+    "rate": 0.5,
+    "streamBySentence": true,
+    "voiceIdentifier": null,
+    "volume": 1
+  },
+  "transcriptionModelDirectory": "",
+  "wakePhrases": [
+    { "score": 1.5, "text": "HEY CIPHER", "threshold": 0.25 },
+    { "score": 1.5, "text": "HEY SIPH", "threshold": 0.25 }
   ]
 }
