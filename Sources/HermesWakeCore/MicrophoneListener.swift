@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 
 public enum MicrophoneError: LocalizedError {
@@ -17,21 +17,24 @@ public enum MicrophoneError: LocalizedError {
   }
 }
 
-public final class MicrophoneListener {
+public final class MicrophoneListener: @unchecked Sendable {
   private let audioEngine = AVAudioEngine()
-  private let processingQueue = DispatchQueue(label: "voice.cipher.wake-processing")
+  private let processingQueue = DispatchQueue(label: "ai.hermes.wake.audio-processing")
   private var converter: AVAudioConverter?
   private var detector: WakeWordDetecting?
-  private var onDetection: ((String) -> Void)?
+  private var onDetection: (@Sendable (String) -> Void)?
+  private var onAudio: (@Sendable ([Float]) -> Void)?
 
   public init() {}
 
   public func start(
     detector: WakeWordDetecting,
-    onDetection: @escaping (String) -> Void
+    onDetection: @escaping @Sendable (String) -> Void,
+    onAudio: @escaping @Sendable ([Float]) -> Void = { _ in }
   ) throws {
     self.detector = detector
     self.onDetection = onDetection
+    self.onAudio = onAudio
 
     let input = audioEngine.inputNode
     let inputFormat = input.outputFormat(forBus: 0)
@@ -65,6 +68,7 @@ public final class MicrophoneListener {
     audioEngine.stop()
     detector = nil
     onDetection = nil
+    onAudio = nil
     converter = nil
   }
 
@@ -76,16 +80,10 @@ public final class MicrophoneListener {
       return
     }
 
-    var supplied = false
+    let supplier = ConverterInputSupplier(buffer: input)
     var error: NSError?
     converter.convert(to: output, error: &error) { _, status in
-      if supplied {
-        status.pointee = .noDataNow
-        return nil
-      }
-      supplied = true
-      status.pointee = .haveData
-      return input
+      supplier.next(status: status)
     }
     guard error == nil,
       output.frameLength > 0,
@@ -95,9 +93,29 @@ public final class MicrophoneListener {
     let samples = Array(UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
     processingQueue.async { [weak self] in
       guard let self, let detector = self.detector else { return }
+      self.onAudio?(samples)
       if let phrase = detector.process(samples: samples, sampleRate: 16_000) {
         self.onDetection?(phrase)
       }
     }
+  }
+}
+
+private final class ConverterInputSupplier: @unchecked Sendable {
+  private let buffer: AVAudioPCMBuffer
+  private var supplied = false
+
+  init(buffer: AVAudioPCMBuffer) {
+    self.buffer = buffer
+  }
+
+  func next(status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+    guard !supplied else {
+      status.pointee = .noDataNow
+      return nil
+    }
+    supplied = true
+    status.pointee = .haveData
+    return buffer
   }
 }

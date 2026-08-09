@@ -1,5 +1,14 @@
 {
+  "originHash" : "f2fc94169fb12b7aed848013a988041c1d293ede71eeee1e44de06037eaf923d",
   "pins" : [
+    {
+      "identity" : "fluidaudio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/FluidInference/FluidAudio",
+      "state" : {
+        "revision" : "00a9aa771900ea09c485659663be31019e293e47"
+      }
+    },
     {
       "identity" : "onnxruntime-libs",
       "kind" : "remoteSourceControl",
@@ -18,5 +27,5 @@
       }
     }
   ],
-  "version" : 2
+  "version" : 3
 }

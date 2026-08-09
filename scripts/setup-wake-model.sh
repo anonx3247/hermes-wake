@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CONFIG_DIR="$HOME/.config/cipher-voice"
+CONFIG_DIR="$HOME/.config/hermes-wake"
 CONFIG="$CONFIG_DIR/config.json"
-DATA_DIR="$HOME/.local/share/cipher-voice"
+DATA_DIR="$HOME/.local/share/hermes-wake"
 MODEL_DIR="$DATA_DIR/models/kws-gigaspeech-3.3M"
 TOOLS_VENV="$DATA_DIR/tools-venv"
 ASSET="sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01-mobile.tar.bz2"
@@ -14,6 +14,17 @@ SHA256="2e6ac2577310bfa2f4b6b5fab0478b868c9d0b2cb2c51b3e13b50581b588864d"
 mkdir -p "$CONFIG_DIR" "$MODEL_DIR" "$DATA_DIR"
 if [[ ! -f "$CONFIG" ]]; then
   cp "$ROOT/examples/config.example.json" "$CONFIG"
+  desktop_connection="$HOME/Library/Application Support/Hermes/connection.json"
+  if [[ -f "$desktop_connection" ]]; then
+    python3 - "$CONFIG" "$desktop_connection" <<'PY'
+import json, pathlib, sys
+config_path, desktop_path = map(pathlib.Path, sys.argv[1:])
+config = json.loads(config_path.read_text())
+desktop = json.loads(desktop_path.read_text())
+config["remote"]["baseURL"] = desktop.get("remote", {}).get("url", "")
+config_path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+  fi
   echo "Created $CONFIG"
 fi
 
@@ -47,5 +58,7 @@ fi
 
 echo
 echo "Wake-word setup complete. Run:"
-echo "  swift run cipher-voice doctor"
-echo "  swift run cipher-voice listen"
+echo "  swift run hermes-wake models"
+echo "  swift run hermes-wake remote login --username YOUR_HERMES_USERNAME"
+echo "  swift run hermes-wake doctor"
+echo "  swift run hermes-wake listen"

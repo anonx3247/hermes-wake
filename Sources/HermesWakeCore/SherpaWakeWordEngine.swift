@@ -18,7 +18,7 @@ public enum WakeEngineError: LocalizedError {
 public final class SherpaWakeWordEngine: WakeWordDetecting {
   private let spotter: SherpaOnnxKeywordSpotterWrapper
 
-  public init(configuration: CipherVoiceConfiguration) throws {
+  public init(configuration: HermesWakeConfiguration) throws {
     let modelDirectory = configuration.modelDirectory.expandingTilde
     let encoder = "\(modelDirectory)/encoder.int8.onnx"
     let decoder = "\(modelDirectory)/decoder.onnx"
